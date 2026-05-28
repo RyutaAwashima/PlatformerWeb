@@ -1086,6 +1086,7 @@ export class Game {
     this.currentMode = 'stage'; // stage | heavens
     this._nextStage = 1;
     this._titleMessage = '';
+    this._pendingBossPhase = 0;
     this._runSeed = 0;
     this._init({ mode: 'stage', stage: 1, lives: MAX_LIVES, newRun: true });
     this.state = 'title';
@@ -1302,11 +1303,19 @@ export class Game {
 
         plat.tryStartCountdown();
         if (plat.isGoal) {
-          if (this.currentStage >= HEAVENS_UNLOCK_STAGE) {
+          // 3ステージごとにボス戦を挿入（Stage 3→Ph1, 6→Ph2, 9→Ph3）
+          const bossAfter = [3, 6, 9];
+          if (bossAfter.includes(this.currentStage)) {
+            const phase = bossAfter.indexOf(this.currentStage) + 1;
+            this._pendingBossPhase = phase;
+            this._nextStage = this.currentStage + 1; // ボスクリア後の遷移先
+            this.state = 'stageclear'; // 一度クリア画面を挙ってからボスへ
+          } else if (this.currentStage >= HEAVENS_UNLOCK_STAGE) {
             this.heavensUnlocked = true;
             this.state = 'title';
             this._titleMessage = 'HEAVENS MODE UNLOCKED';
           } else {
+            this._pendingBossPhase = 0;
             this._nextStage = this.currentStage + 1;
             this.state = 'stageclear';
           }
@@ -1617,9 +1626,23 @@ export class Game {
         this._titleMessage = 'HEAVENS MODE';
         this._init({ mode: 'heavens', stage: 1, lives: MAX_LIVES });
       } else if (this.state === 'stageclear' && (inp.isPressed('Space') || inp.isPressed('KeyR'))) {
-        this._init({ mode: 'stage', stage: this._nextStage, lives: this.lives });
+        if (this._pendingBossPhase > 0) {
+          // ボス戦へ遷移
+          const phase = this._pendingBossPhase;
+          this._pendingBossPhase = 0;
+          this._init({ mode: 'boss', stage: this.currentStage, lives: this.lives, bossPhase: phase });
+        } else {
+          this._init({ mode: 'stage', stage: this._nextStage, lives: this.lives });
+        }
       } else if (this.state === 'bossclear' && (inp.isPressed('Space') || inp.isPressed('KeyR'))) {
-        this._init({ mode: 'stage', stage: this.currentStage, lives: this.lives, newRun: false });
+        if (this._nextStage > STAGE_COUNT) {
+          // Boss Phase 3 クリア → Heavensアンロック
+          this.heavensUnlocked = true;
+          this.state = 'title';
+          this._titleMessage = 'HEAVENS MODE UNLOCKED';
+        } else {
+          this._init({ mode: 'stage', stage: this._nextStage, lives: this.lives, newRun: false });
+        }
       }
       inp.flush();
       return;
@@ -2460,16 +2483,23 @@ export class Game {
       this._overlay(title, sub, this._titleMessage === 'GAME OVER' ? '#ff6b7a' : COLORS.goal);
     }
     if (this.state === 'stageclear') {
+      const isBossNext = this._pendingBossPhase > 0;
+      const subMsg = isBossNext
+        ? `BOSS PHASE ${this._pendingBossPhase} へ挑戦！  [ Space / R ]`
+        : `次は Stage ${this._nextStage} へ  [ Space / R ]`;
       this._overlay(
         `STAGE ${this.currentStage} CLEAR`,
-        `次は Stage ${this._nextStage} へ  [ Space / R ]`,
+        subMsg,
         '#7df0a4'
       );
     }
     if (this.state === 'bossclear') {
+      const nextMsg = this._nextStage > STAGE_COUNT
+        ? 'HEAVENS MODE アンロック  [ Space / R ]'
+        : `Stage ${this._nextStage} へ  [ Space / R ]`;
       this._overlay(
         `BOSS PHASE ${this._bossPhase} CLEAR!`,
-        'Space / R でタイトルに戻る',
+        nextMsg,
         COLORS.bossWeak
       );
     }
