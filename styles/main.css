@@ -56,21 +56,12 @@ html, body {
   z-index: 0;
 }
 
-/* 左移動ゾーン: 左端〜25%幅、下45%高さ */
-#vpad-left-btn {
+/* D-パッドゾーン: 左27%幅、全高さ。内部50%で◀▶を分割 */
+#vpad-dpad {
   left: 0;
-  bottom: 0;
-  width: 25%;
-  height: 45%;
-  z-index: 1;
-}
-
-/* 右移動ゾーン: 25〜50%幅、下45%高さ */
-#vpad-right-btn {
-  left: 25%;
-  bottom: 0;
-  width: 25%;
-  height: 45%;
+  top: 0;
+  width: 27%;
+  height: 100%;
   z-index: 1;
 }
 

@@ -2146,6 +2146,7 @@ export class Game {
     this.input  = new Input();
     // タッチデバイス判定（バーチャルパッド描画に使用）
     this._isTouchDevice = navigator.maxTouchPoints > 0;
+    this._jumpFlashes   = []; // {cx, cy, t} ジャンプフラッシュアニメーション用
     this._lastTime = null;
     this.heavensUnlocked = false;
     this.bestHeavensHeight = 0;
@@ -4520,6 +4521,11 @@ export class Game {
 
   // ===== バーチャルパッド描画 =====
   // canvas論理座標(960×540)でボタンを描く。DOM透明ゾーンと位置を合わせる。
+  //
+  // レイアウト:
+  //   ◀ center(70, 465) r=46  — dpad左半分 (canvas 0–130px)
+  //   ▶ center(195, 465) r=46  — dpad右半分 (canvas 130–259px ≒ 27%)
+  //   右50% = タップ任意位置でジャンプ → フラッシュアニメのみ表示
   _renderVpad(ctx) {
     const inp  = this.input;
     const lOn  = inp.isVirtualDown('ArrowLeft');
@@ -4529,75 +4535,87 @@ export class Game {
 
     // ---- ボタン描画ヘルパー ----
     const drawBtn = (cx, cy, r, label, active) => {
-      // 外円（グロー）
-      ctx.globalAlpha = active ? 0.20 : 0.06;
+      // グロー
+      ctx.globalAlpha = active ? 0.18 : 0.05;
       ctx.fillStyle   = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, r + 10, 0, Math.PI * 2); ctx.fill();
 
-      // 本体円
-      ctx.globalAlpha = active ? 0.55 : 0.22;
+      // 本体
+      ctx.globalAlpha = active ? 0.52 : 0.20;
       ctx.fillStyle   = active ? '#a8d8ff' : '#ffffff';
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
 
       // 枠
-      ctx.globalAlpha = active ? 0.90 : 0.45;
-      ctx.strokeStyle = active ? '#70b8ff' : 'rgba(255,255,255,0.7)';
+      ctx.globalAlpha = active ? 0.85 : 0.40;
+      ctx.strokeStyle = active ? '#70b8ff' : 'rgba(255,255,255,0.65)';
       ctx.lineWidth   = 2.5;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
 
       // ラベル
-      ctx.globalAlpha    = active ? 1.0 : 0.65;
-      ctx.fillStyle      = '#ffffff';
-      ctx.font           = `bold ${Math.round(r * 0.72)}px ui-monospace, monospace`;
-      ctx.textAlign      = 'center';
-      ctx.textBaseline   = 'middle';
+      ctx.globalAlpha  = active ? 1.0 : 0.60;
+      ctx.fillStyle    = '#ffffff';
+      ctx.font         = `bold ${Math.round(r * 0.72)}px ui-monospace, monospace`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
       ctx.fillText(label, cx, cy + 1);
-      ctx.textBaseline   = 'alphabetic';
+      ctx.textBaseline = 'alphabetic';
     };
 
-    const R = 50; // 移動ボタン半径（論理px）
+    drawBtn( 70, 465, 46, '◀', lOn);
+    drawBtn(195, 465, 46, '▶', rOn);
 
-    // ◀ 左移動: DOM vpad-left-btn の中心 = 左12.5% × 下22.5%上 = (120, 418)
-    drawBtn(120, 418, R, '◀', lOn);
+    // ---- ジャンプエリア: 極薄ヒント（▲を右半分中央下に薄く）----
+    ctx.globalAlpha  = 0.10;
+    ctx.fillStyle    = '#80ff80';
+    ctx.font         = 'bold 34px ui-monospace, monospace';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('▲', 720, 478);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign    = 'left';
 
-    // ▶ 右移動: DOM vpad-right-btn の中心 = 左37.5% × 下22.5%上 = (360, 418)
-    drawBtn(360, 418, R, '▶', rOn);
+    // ---- ジャンプフラッシュアニメーション ----
+    // addJumpFlash(cx, cy) で追加、400ms で拡大フェードアウト
+    const now = Date.now();
+    this._jumpFlashes = this._jumpFlashes.filter(f => now - f.t < 420);
+    for (const f of this._jumpFlashes) {
+      const p = (now - f.t) / 420;      // 0→1
+      const a = (1 - p) * 0.85;
 
-    // ▲ ジャンプ: 右50%の中央下寄り = (720, 442)
-    const JR = 60;
-    // ジャンプは one-shot なので押し下げ状態なし → 常に通常表示
-    ctx.globalAlpha = 0.08;
-    ctx.fillStyle   = '#80ff80';
-    ctx.beginPath();
-    ctx.arc(720, 442, JR + 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 0.20;
-    ctx.fillStyle   = '#80ff80';
-    ctx.beginPath();
-    ctx.arc(720, 442, JR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 0.50;
-    ctx.strokeStyle = 'rgba(140,255,140,0.8)';
-    ctx.lineWidth   = 2.5;
-    ctx.beginPath();
-    ctx.arc(720, 442, JR, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.globalAlpha    = 0.65;
-    ctx.fillStyle      = '#c0ffc0';
-    ctx.font           = `bold ${Math.round(JR * 0.72)}px ui-monospace, monospace`;
-    ctx.textAlign      = 'center';
-    ctx.textBaseline   = 'middle';
-    ctx.fillText('▲', 720, 443);
-    ctx.textBaseline   = 'alphabetic';
-    ctx.textAlign      = 'left';
+      // 拡大リング
+      const ringR = 36 + p * 32;
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = '#80ff80';
+      ctx.lineWidth   = Math.max(0.5, 3.5 - p * 3);
+      ctx.beginPath(); ctx.arc(f.cx, f.cy, ringR, 0, Math.PI * 2); ctx.stroke();
+
+      // 内側の淡い塗り（初期のみ）
+      if (p < 0.25) {
+        ctx.globalAlpha = (0.25 - p) / 0.25 * 0.30;
+        ctx.fillStyle   = '#80ff80';
+        ctx.beginPath(); ctx.arc(f.cx, f.cy, ringR, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // ▲ ラベル（前半フェードアウト）
+      if (p < 0.55) {
+        const la = a * (1 - p / 0.55);
+        ctx.globalAlpha  = la;
+        ctx.fillStyle    = '#c0ffc0';
+        ctx.font         = `bold ${Math.round(38 * (1 - p * 0.5))}px ui-monospace, monospace`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('▲', f.cx, f.cy);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign    = 'left';
+      }
+    }
 
     ctx.restore();
+  }
+
+  /** ジャンプフラッシュをcanvas論理座標で1件追加（main.jsから呼ぶ） */
+  addJumpFlash(cx, cy) {
+    this._jumpFlashes.push({ cx, cy, t: Date.now() });
   }
 
   _drawVerts(ctx, body) {
