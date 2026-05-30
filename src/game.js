@@ -2143,7 +2143,7 @@ export class Game {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx    = canvas.getContext('2d');
-    this.input  = new Input();
+    this.input  = new Input(canvas); // canvasを渡しタッチ対応を有効化
     this._lastTime = null;
     this.heavensUnlocked = false;
     this.bestHeavensHeight = 0;
@@ -2941,6 +2941,9 @@ export class Game {
     if (this._knockbackTimer > 0) {
       this._knockbackTimer -= dt;
     } else {
+      // タッチ入力の左右判定基準をプレイヤーのcanvas X座標で更新
+      inp.setTouchSplitX(this.playerBody.position.x);
+
       // 水平移動
       let vx = 0;
       if (inp.isDown('ArrowLeft')  || inp.isDown('KeyA')) vx = -PLAYER_SPEED;

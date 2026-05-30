@@ -16,4 +16,7 @@ html, body {
   max-height: 100vh;
   aspect-ratio: 16 / 9;
   image-rendering: pixelated;
+  touch-action: none;      /* ブラウザデフォルトのスクロール・ピンチを無効化 */
+  user-select: none;       /* テキスト選択を禁止 */
+  -webkit-user-select: none;
 }
