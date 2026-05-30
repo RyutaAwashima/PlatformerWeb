@@ -50,11 +50,6 @@ html, body {
   user-select: none;
 }
 
-/* 全画面ベースゾーン: 最下層。タイトル・クリア画面の「どこでもタップ」を拾う */
-#vpad-catchall {
-  inset: 0;
-  z-index: 0;
-}
 
 /* D-パッドゾーン: 左27%幅、全高さ。内部50%で◀▶を分割 */
 #vpad-dpad {

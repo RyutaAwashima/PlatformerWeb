@@ -1,28 +1,21 @@
 import { Game } from './game.js';
 
-const canvas = document.getElementById('canvas');
-const game   = new Game(canvas);
-const input  = game.input;
+const canvas   = document.getElementById('canvas');
+const gameWrap = document.getElementById('game-wrap');
+const game     = new Game(canvas);
+const input    = game.input;
 
-// ===== マウスクリックでも Space 発火（タイトル/クリア画面対応）=====
-canvas.addEventListener('mousedown', e => {
-  e.preventDefault();
+// ===== 非プレイ状態: どこでもクリック/タップで決定 =====
+// pointerdown はマウス・タッチ両方で発火し、バブリングするため
+// vpad ゾーンが上に乗っていても #game-wrap で確実に捕捉できる
+gameWrap.addEventListener('pointerdown', () => {
   if (game.state !== 'playing') input.virtualPress('Space');
 });
 
-// ===== バーチャルパッド設定 =====
+// ===== バーチャルパッド設定（プレイ中のみ）=====
 // DOM要素はタッチ検知のみ担当。ボタン描画はgame.js側でcanvasに行う。
 const dpad  = document.getElementById('vpad-dpad');
 const jZone = document.getElementById('vpad-jump');
-
-// ---- 全画面ベースゾーン（最下層 z-index:0）----
-const catchAll = document.getElementById('vpad-catchall');
-if (catchAll) {
-  catchAll.addEventListener('touchstart', e => {
-    e.preventDefault();
-    if (game.state !== 'playing') input.virtualPress('Space');
-  }, { passive: false });
-}
 
 // ---- D-パッド（ドラッグで◀▶切替対応）----
 // ゾーン内の左半分 → ArrowLeft、右半分 → ArrowRight
@@ -49,7 +42,7 @@ if (dpad) {
 
   dpad.addEventListener('touchstart', e => {
     e.preventDefault();
-    if (game.state !== 'playing') { input.virtualPress('Space'); return; }
+    if (game.state !== 'playing') return; // 非プレイ時は gameWrap.pointerdown に任せる
     const t = e.changedTouches[0];
     activeTouchId = t.identifier;
     applyDir(getDir(t.clientX));
@@ -80,7 +73,7 @@ if (dpad) {
 if (jZone) {
   jZone.addEventListener('touchstart', e => {
     e.preventDefault();
-    if (game.state !== 'playing') { input.virtualPress('Space'); return; }
+    if (game.state !== 'playing') return; // 非プレイ時は gameWrap.pointerdown に任せる
     for (const t of e.changedTouches) {
       const cr = canvas.getBoundingClientRect();
       const cx = (t.clientX - cr.left) / cr.width  * 960;
@@ -91,3 +84,4 @@ if (jZone) {
     }
   }, { passive: false });
 }
+
