@@ -1,25 +1,16 @@
 // キー入力管理。isDown: 押しっぱなし、isPressed: 押した瞬間のみ
-// タッチ対応: canvas要素を渡すとマルチタッチが有効になる
+// virtualDown/Up/Press: バーチャルパッドから外部で呼び出す
 const PREVENT = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 
 export class Input {
-  /**
-   * @param {HTMLCanvasElement|null} canvas - タッチ入力を受け付けるcanvas要素
-   */
-  constructor(canvas = null) {
-    this._held          = new Set();
-    this._justPressed   = new Set();
-    this._textMode      = false;
-    this._textBuffer    = '';
-    this._textEntered   = false;
+  constructor() {
+    this._held        = new Set();
+    this._justPressed = new Set();
+    this._vHeld       = new Set(); // バーチャルパッド押しっぱなし状態
+    this._textMode    = false;
+    this._textBuffer  = '';
+    this._textEntered = false;
 
-    // タッチ状態管理
-    // _activeTouches: touchIdentifier → {cx, cy} (canvas論理ピクセル座標)
-    this._activeTouches = new Map();
-    // 左右判定の分割X座標（毎フレームプレイヤーX座標で更新される）
-    this._splitX        = 480;
-
-    // ===== キーボードイベント =====
     window.addEventListener('keydown', e => {
       if (PREVENT.has(e.code)) e.preventDefault();
       if (!this._held.has(e.code)) this._justPressed.add(e.code);
@@ -35,97 +26,36 @@ export class Input {
       }
     });
     window.addEventListener('keyup', e => this._held.delete(e.code));
-
-    // ===== タッチイベント =====
-    if (canvas) {
-      // clientX/Y → canvas論理座標（CSSスケールを補正）
-      const toCanvasCoord = (clientX, clientY) => {
-        const r = canvas.getBoundingClientRect();
-        return {
-          cx: (clientX - r.left) * (canvas.width  / r.width),
-          cy: (clientY - r.top)  * (canvas.height / r.height),
-        };
-      };
-
-      canvas.addEventListener('touchstart', e => {
-        e.preventDefault();
-        for (const t of e.changedTouches) {
-          this._activeTouches.set(t.identifier, toCanvasCoord(t.clientX, t.clientY));
-        }
-        // タッチ開始 = ジャンプ（Space相当）を瞬間発火
-        this._justPressed.add('Space');
-      }, { passive: false });
-
-      canvas.addEventListener('touchmove', e => {
-        e.preventDefault();
-        for (const t of e.changedTouches) {
-          if (this._activeTouches.has(t.identifier)) {
-            this._activeTouches.set(t.identifier, toCanvasCoord(t.clientX, t.clientY));
-          }
-        }
-      }, { passive: false });
-
-      // touchend / touchcancel どちらもタッチ解除
-      const releaseHandler = e => {
-        for (const t of e.changedTouches) {
-          this._activeTouches.delete(t.identifier);
-        }
-      };
-      canvas.addEventListener('touchend',    releaseHandler, { passive: false });
-      canvas.addEventListener('touchcancel', releaseHandler, { passive: false });
-    }
   }
 
-  /**
-   * プレイヤーのcanvas X座標を毎フレーム渡す。
-   * この座標より左のタッチ = 左移動、右 = 右移動 として扱う。
-   */
-  setTouchSplitX(x) { this._splitX = x; }
+  // ===== バーチャルパッドAPI =====
 
-  /** 現在アクティブなタッチの中にsplitXより左のものがあるか */
-  _touchAnyLeft() {
-    for (const { cx } of this._activeTouches.values()) {
-      if (cx < this._splitX) return true;
-    }
-    return false;
-  }
+  /** ボタン長押し開始（移動系） */
+  virtualDown(code)  { this._vHeld.add(code); }
+  /** ボタン長押し解除 */
+  virtualUp(code)    { this._vHeld.delete(code); }
+  /** 1フレームだけ押した判定（ジャンプ・決定） */
+  virtualPress(code) { this._justPressed.add(code); }
 
-  /** 現在アクティブなタッチの中にsplitX以右のものがあるか */
-  _touchAnyRight() {
-    for (const { cx } of this._activeTouches.values()) {
-      if (cx >= this._splitX) return true;
-    }
-    return false;
-  }
+  // ===== クエリAPI =====
 
-  /**
-   * キーまたはタッチの「押しっぱなし」判定。
-   * ArrowLeft / ArrowRight はタッチ位置でも判定される。
-   */
-  isDown(code) {
-    if (this._held.has(code)) return true;
-    if (code === 'ArrowLeft')  return this._touchAnyLeft();
-    if (code === 'ArrowRight') return this._touchAnyRight();
-    return false;
-  }
-
-  /** キーまたはタッチの「押した瞬間」判定 */
+  /** キーボードまたはバーチャルパッドの「押しっぱなし」 */
+  isDown(code)    { return this._held.has(code) || this._vHeld.has(code); }
+  /** キーボードまたはバーチャルパッドの「押した瞬間」 */
   isPressed(code) { return this._justPressed.has(code); }
+  /** バーチャルパッドが現在押しっぱなしか（描画のフィードバック用） */
+  isVirtualDown(code) { return this._vHeld.has(code); }
 
-  /** テキストモードON/OFF。ONにするとバッファをリセット */
+  // ===== テキストモード =====
+
   setTextMode(on) {
     this._textMode    = on;
     this._textBuffer  = '';
     this._textEntered = false;
   }
 
-  /** 現在のコンソール入力文字列を返す */
   getTextBuffer() { return this._textBuffer; }
 
-  /**
-   * Enterが押されていたらコマンド文字列を返してバッファをクリア。
-   * まだ押されていなければ null を返す。
-   */
   consumeTextEnter() {
     if (!this._textEntered) return null;
     const cmd = this._textBuffer.trim();

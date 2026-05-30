@@ -2143,7 +2143,9 @@ export class Game {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx    = canvas.getContext('2d');
-    this.input  = new Input(canvas); // canvasを渡しタッチ対応を有効化
+    this.input  = new Input();
+    // タッチデバイス判定（バーチャルパッド描画に使用）
+    this._isTouchDevice = navigator.maxTouchPoints > 0;
     this._lastTime = null;
     this.heavensUnlocked = false;
     this.bestHeavensHeight = 0;
@@ -2941,9 +2943,6 @@ export class Game {
     if (this._knockbackTimer > 0) {
       this._knockbackTimer -= dt;
     } else {
-      // タッチ入力の左右判定基準をプレイヤーのcanvas X座標で更新
-      inp.setTouchSplitX(this.playerBody.position.x);
-
       // 水平移動
       let vx = 0;
       if (inp.isDown('ArrowLeft')  || inp.isDown('KeyA')) vx = -PLAYER_SPEED;
@@ -4485,6 +4484,9 @@ export class Game {
     ctx.font = '12px ui-monospace, Consolas, monospace';
     ctx.fillText('← → / AD: 移動  ↑ / W / Space: ジャンプ', 14, H - 12);
 
+    // バーチャルパッド描画（タッチデバイスのみ）
+    if (this._isTouchDevice) this._renderVpad(ctx);
+
     // オーバーレイ
     if (this.state === 'title') {
       const title = this._titleMessage || 'PLATFORMER WEB';
@@ -4514,6 +4516,88 @@ export class Game {
         COLORS.bossWeak
       );
     }
+  }
+
+  // ===== バーチャルパッド描画 =====
+  // canvas論理座標(960×540)でボタンを描く。DOM透明ゾーンと位置を合わせる。
+  _renderVpad(ctx) {
+    const inp  = this.input;
+    const lOn  = inp.isVirtualDown('ArrowLeft');
+    const rOn  = inp.isVirtualDown('ArrowRight');
+
+    ctx.save();
+
+    // ---- ボタン描画ヘルパー ----
+    const drawBtn = (cx, cy, r, label, active) => {
+      // 外円（グロー）
+      ctx.globalAlpha = active ? 0.20 : 0.06;
+      ctx.fillStyle   = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 本体円
+      ctx.globalAlpha = active ? 0.55 : 0.22;
+      ctx.fillStyle   = active ? '#a8d8ff' : '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 枠
+      ctx.globalAlpha = active ? 0.90 : 0.45;
+      ctx.strokeStyle = active ? '#70b8ff' : 'rgba(255,255,255,0.7)';
+      ctx.lineWidth   = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // ラベル
+      ctx.globalAlpha    = active ? 1.0 : 0.65;
+      ctx.fillStyle      = '#ffffff';
+      ctx.font           = `bold ${Math.round(r * 0.72)}px ui-monospace, monospace`;
+      ctx.textAlign      = 'center';
+      ctx.textBaseline   = 'middle';
+      ctx.fillText(label, cx, cy + 1);
+      ctx.textBaseline   = 'alphabetic';
+    };
+
+    const R = 50; // 移動ボタン半径（論理px）
+
+    // ◀ 左移動: DOM vpad-left-btn の中心 = 左12.5% × 下22.5%上 = (120, 418)
+    drawBtn(120, 418, R, '◀', lOn);
+
+    // ▶ 右移動: DOM vpad-right-btn の中心 = 左37.5% × 下22.5%上 = (360, 418)
+    drawBtn(360, 418, R, '▶', rOn);
+
+    // ▲ ジャンプ: 右50%の中央下寄り = (720, 442)
+    const JR = 60;
+    // ジャンプは one-shot なので押し下げ状態なし → 常に通常表示
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle   = '#80ff80';
+    ctx.beginPath();
+    ctx.arc(720, 442, JR + 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle   = '#80ff80';
+    ctx.beginPath();
+    ctx.arc(720, 442, JR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.50;
+    ctx.strokeStyle = 'rgba(140,255,140,0.8)';
+    ctx.lineWidth   = 2.5;
+    ctx.beginPath();
+    ctx.arc(720, 442, JR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha    = 0.65;
+    ctx.fillStyle      = '#c0ffc0';
+    ctx.font           = `bold ${Math.round(JR * 0.72)}px ui-monospace, monospace`;
+    ctx.textAlign      = 'center';
+    ctx.textBaseline   = 'middle';
+    ctx.fillText('▲', 720, 443);
+    ctx.textBaseline   = 'alphabetic';
+    ctx.textAlign      = 'left';
+
+    ctx.restore();
   }
 
   _drawVerts(ctx, body) {
