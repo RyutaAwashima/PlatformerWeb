@@ -8,7 +8,23 @@ const input    = game.input;
 // ===== 非プレイ状態: どこでもクリック/タップで決定 =====
 // pointerdown はマウス・タッチ両方で発火し、バブリングするため
 // vpad ゾーンが上に乗っていても #game-wrap で確実に捕捉できる
-gameWrap.addEventListener('pointerdown', () => {
+gameWrap.addEventListener('pointerdown', e => {
+  if (game.state === 'powerup_select') {
+    // カードタップ: X座標から 0/1/2 を判定
+    const cr    = canvas.getBoundingClientRect();
+    const lcx   = (e.clientX - cr.left) / cr.width * 960;
+    const choices = game._puChoices;
+    if (choices && choices.length > 0) {
+      const CARD_W = 220, GAP = 30;
+      const totalW = CARD_W * choices.length + GAP * (choices.length - 1);
+      const startX = (960 - totalW) / 2;
+      for (let i = 0; i < choices.length; i++) {
+        const cx = startX + i * (CARD_W + GAP);
+        if (lcx >= cx && lcx <= cx + CARD_W) { game.applyPowerup(i); return; }
+      }
+    }
+    return; // PU選択中はゲームに戻らない
+  }
   if (game.state !== 'playing') input.virtualPress('Space');
 });
 
@@ -84,7 +100,18 @@ if (dpad) {
   dpad.addEventListener('touchcancel', release, { passive: false });
 }
 
-// ---- ジャンプゾーン（右半分・任意位置タップ）----
+// ---- ダッシュボタン（右23%）----
+// air_dash PU取得時のみ有効。タップで game.triggerAirDash() を呼び出す。
+const dashZone = document.getElementById('vpad-dash');
+if (dashZone) {
+  dashZone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (game.state !== 'playing') return;
+    game.triggerAirDash();
+  }, { passive: false });
+}
+
+// ---- ジャンプゾーン（中央27%幅、任意位置タップ）----
 // タップ位置をcanvas論理座標に変換してゲームへ通知 → フラッシュ描画
 if (jZone) {
   jZone.addEventListener('touchstart', e => {

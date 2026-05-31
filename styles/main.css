@@ -60,11 +60,20 @@ html, body {
   z-index: 1;
 }
 
-/* ジャンプゾーン: 右50%幅、全高さ */
+/* ジャンプゾーン: 中央27%幅（50%-77%） */
 #vpad-jump {
-  right: 0;
+  right: 23%;
   top: 0;
-  width: 50%;
+  width: 27%;
   height: 100%;
   z-index: 1;
+}
+
+/* ダッシュボタン: 右23%幅（77%-100%） */
+#vpad-dash {
+  right: 0;
+  top: 0;
+  width: 23%;
+  height: 100%;
+  z-index: 2;
 }

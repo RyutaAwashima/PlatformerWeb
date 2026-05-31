@@ -20,7 +20,7 @@ export class Input {
           this._textEntered = true;
         } else if (e.key === 'Backspace') {
           this._textBuffer = this._textBuffer.slice(0, -1);
-        } else if (e.key.length === 1 && this._textBuffer.length < 8) {
+        } else if (e.key.length === 1 && this._textBuffer.length < 64) {
           this._textBuffer += e.key;
         }
       }

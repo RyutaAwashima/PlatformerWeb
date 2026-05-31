@@ -75,10 +75,80 @@ const PLAT_W_MIN = 120;
 const PLAT_W_MAX = 220;
 const PLAT_H = 16;
 const HEAL_INTERVAL    = 750;    // 回復床の出現間隔（高さpx）
+const PU_INTERVAL      = 900;    // パワーアップ床の出現間隔（高さpx）
 const WIND_STRENGTH     = 0.10;   // 風ドリフト量 px/frame (dt=16msで約1.6px/frame)
 const WIND_ZONE_MIN_H   = 240;    // 風ゾーン最小高さ(px)
 const WIND_ZONE_MAX_H   = 370;    // 風ゾーン最大高さ(px)
 const WIND_ZONE_SPACING = 600;    // 風ゾーン生成間隔(px)
+
+// ===== パワーアップ定義 =====
+// rarity: 'common' | 'uncommon' | 'rare'
+// maxLv : 最大積み上げ回数
+// desc  : lv(1起算) を受け取り表示文字列を返す関数
+const POWERUP_POOL = [
+  // ---- common (青) ---- 出現重み 5
+  {
+    id: 'dj_speed', rarity: 'common', maxLv: 10, label: 'DJ Speed', short: 'DJSPD',
+    desc: lv => `2段JumpCD -${lv * 100}ms`,
+  },
+  {
+    id: 'high_jump', rarity: 'common', maxLv: 5, label: 'High Jump', short: 'HIJMP',
+    desc: lv => `Jump力 +${lv}`,
+  },
+  {
+    id: 'speed_up', rarity: 'common', maxLv: 4, label: 'Speed Up', short: 'SPD+',
+    desc: lv => `移動速度 +${lv}`,
+  },
+  {
+    id: 'quick_rise', rarity: 'common', maxLv: 5, label: 'Quick Rise', short: 'QRISE',
+    desc: lv => `のけぞり -${lv * 80}ms`,
+  },
+  {
+    id: 'tough_floor', rarity: 'common', maxLv: 3, label: 'Tough Floor', short: 'TOUGH',
+    desc: lv => `崩れ猶予 +${lv * 400}ms`,
+  },
+  {
+    id: 'coyote_plus', rarity: 'common', maxLv: 2, label: 'Coyote+', short: 'COYT+',
+    desc: lv => `踏み外し猶予 +${lv * 80}ms`,
+  },
+  // ---- uncommon (紫) ---- 出現重み 3
+  {
+    id: 'feather', rarity: 'uncommon', maxLv: 3, label: 'Feather Fall', short: 'FTHR',
+    desc: lv => `落下速度 ${lv * 20}%軽減`,
+  },
+  {
+    id: 'armor', rarity: 'uncommon', maxLv: 2, label: 'Armor', short: 'ARMOR',
+    desc: lv => `ふっとび ${lv * 30}%軽減`,
+  },
+  {
+    id: 'wind_shield', rarity: 'uncommon', maxLv: 2, label: 'Wind Shield', short: 'WSHLD',
+    desc: lv => `風の影響 ${lv * 40}%軽減`,
+  },
+  // ---- rare (金) ---- 出現重み 1
+  {
+    id: 'stomp_bounce', rarity: 'rare', maxLv: 3, label: 'Stomp Bounce', short: 'STOMP',
+    desc: lv => `踏み跳ね +${lv * 4}`,
+  },
+  {
+    id: 'ghost', rarity: 'rare', maxLv: 2, label: 'Ghost', short: 'GHOST',
+    desc: lv => `被弾後無敵 +${lv * 400}ms`,
+  },
+  {
+    id: 'air_dash', rarity: 'rare', maxLv: 1, label: 'Air Dash', short: 'ADASH',
+    desc: _lv => '空中で1回横ダッシュ可能',
+  },
+];
+
+// 重み付き抽選テーブル（1エントリ = 1枚）
+const PU_WEIGHTED = POWERUP_POOL.flatMap(p =>
+  Array(p.rarity === 'common' ? 5 : p.rarity === 'uncommon' ? 3 : 1).fill(p)
+);
+
+const RARITY_COLOR = {
+  common:   '#6ab0ff', // 青
+  uncommon: '#c070ff', // 紫
+  rare:     '#ffd040', // 金
+};
 
 const COLORS = {
   bg:           '#0d0e14',
@@ -92,6 +162,9 @@ const COLORS = {
   heal:         '#58ff9f',
   healUsed:     '#2f5d43',
   healGlow:     'rgba(88,255,159,0.8)',
+  puFloor:      '#ff9f40',        // パワーアップ床（未使用）
+  puFloorUsed:  '#5a3a18',        // パワーアップ床（使用済み）
+  puFloorGlow:  'rgba(255,159,64,0.75)',
   movingPlat:   '#7a8aff',
   movingSmooth: '#c07aff',
   blinkOn:      '#f0e060',
@@ -242,6 +315,7 @@ class PlatformObj {
     isGround    = false,
     isGoal      = false,
     isHealing   = false,
+    isPowerup   = false,
     canCollapse = true,
     collapseMs  = PLATFORM_COUNTDOWN, // 崩落開始までのms（デフォルトは通常床と同じ）
     // 横移動床
@@ -262,6 +336,8 @@ class PlatformObj {
     this.isGround    = isGround;
     this.isGoal      = isGoal;
     this.isHealing   = isHealing;
+    this.isPowerup    = isPowerup;
+    this.puUsed       = false;    // PU床踏み済みフラグ
     this.canCollapse  = canCollapse;
     this._collapseMs  = collapseMs;
     this.healUsed     = false;
@@ -298,10 +374,11 @@ class PlatformObj {
     this._prevY = body.position.y;
   }
 
-  tryStartCountdown() {
+  tryStartCountdown(bonusMs = 0) {
     // エレベーターは専用の起動ロジックを使うため対象外
     if (this.state === 'idle' && this.canCollapse && !this.isElevator) {
       this.state = 'countdown';
+      if (bonusMs > 0) this._collapseMs += bonusMs;
     }
   }
 
@@ -393,6 +470,7 @@ class PlatformObj {
 
   get color() {
     if (this.isHealing)  return this.healUsed ? COLORS.healUsed : COLORS.heal;
+    if (this.isPowerup)  return this.puUsed  ? COLORS.puFloorUsed : COLORS.puFloor;
     if (this.isGoal)     return COLORS.goal;
     if (this.isElevator) return this.elevState === 'rising' ? COLORS.elevRising : COLORS.elevIdle;
     // カウントダウン中・崩落中は種別に関わらず警告色
@@ -2199,6 +2277,11 @@ export class Game {
     if (newRun || stage !== this.currentStage || mode !== this.currentMode) {
       this._healUsedY.clear();
     }
+    // パワーアップはnewRunのときのみリセット（リトライでは持越し）
+    if (newRun) {
+      this._powerups  = {};
+      this._puChoices = null;
+    }
     this.engine = Engine.create({ gravity: { y: 2.0 } });
     const world = this.engine.world;
 
@@ -2217,6 +2300,15 @@ export class Game {
     this._flashTimer     = 0;   // ms: フラッシュ残時間
     this.enemies         = [];  // 敵リスト
     this._knockbackTimer = 0;   // ms: ノックバック残時間
+    this._ghostTimer     = 0;   // ms: ghost PU による被弾後無敵残時間
+    this._coyoteTimer    = 0;   // ms: coyote_plus PU による空中ジャンプ猶予
+    this._airDashUsed    = false; // air_dash PU: 空中ダッシュ使用済みフラグ
+    this._airDashTimer   = 0;     // ms: ダッシュ持続残時間
+    this._airDashVx      = 0;     // ダッシュ開始時の横速度
+    this._dtapLast       = { left: 0, right: 0 }; // double-tap タイムスタンプ
+    this._dashTrigger    = false; // ダッシュ発動フラグ（double-tap or タッチ）
+    this._dashTriggerDir = 0;     // ダッシュ方向 (-1 or 1)
+    this._lastMoveDir    = 1;     // 最後の水平移動方向（タッチダッシュのデフォルト）
     this._wallHitFlash   = 0;   // ms: 壁叩きつけエフェクト残時間
     this.boss            = null; // ボスインスタンス
     this._bossPhase      = bossPhase; // 現在のボスフェーズ
@@ -2269,6 +2361,10 @@ export class Game {
       this._healFrontier = this.currentStageConfig.healInterval > 0
         ? spawnY - Math.round(this.stageGoalHeight * 0.55)
         : -9999999;
+      // PU床: Stage2以降かつ最初の回復床より少し高い位置から開始
+      this._puFrontier = mode === 'stage' && stage >= 2
+        ? spawnY - Math.round(this.stageGoalHeight * 0.35)
+        : -9999999;
       this.windZones     = [];
       this._windFrontier = spawnY - 600;
       this._generateBatch(12);
@@ -2292,8 +2388,10 @@ export class Game {
         if (this.currentMode === 'boss' && this.boss && this.boss.state !== 'dead') {
           // 弱点踏みつけ → ダメージ
           if (other === this.boss.weakBody && this.boss._weakActive && playerFalling && playerAbove) {
-            Body.setVelocity(this.playerBody, { x: this.playerBody.velocity.x, y: STOMP_VY });
+            const stompVy = STOMP_VY - this.getPuLevel('stomp_bounce') * 4;
+            Body.setVelocity(this.playerBody, { x: this.playerBody.velocity.x, y: stompVy });
             this._jumpsLeft = 2;
+            this._airDashUsed = false;
             this._knockbackTimer = 0;
             // Boss4: windup中の前隙踏み → stompWeak（スタン遷移、ダメージなし）
             if (this._bossPhase === 4 && this.boss.state === 'windup') {
@@ -2392,9 +2490,11 @@ export class Game {
         const hitEnemy = this.enemies.find(en => en.body === other);
         if (hitEnemy) {
           if (playerFalling && playerAbove) {
-            // 踏みつけ：踏み台ジャンプ + 敵ディフィート
-            Body.setVelocity(this.playerBody, { x: this.playerBody.velocity.x, y: STOMP_VY });
+            // 踏みつけ：踏み台ジャンプ + 敵ディフィート（stomp_bounce PUで跳ね強化）
+            const stompVy = STOMP_VY - this.getPuLevel('stomp_bounce') * 4;
+            Body.setVelocity(this.playerBody, { x: this.playerBody.velocity.x, y: stompVy });
             this._jumpsLeft = 2;
+            this._airDashUsed = false;
             this._knockbackTimer = 0;
             const idx = this.enemies.indexOf(hitEnemy);
             if (idx !== -1) this.enemies.splice(idx, 1);
@@ -2404,10 +2504,12 @@ export class Game {
               y: -20,
             });
             World.remove(this.engine.world, other);
-          } else if (this._knockbackTimer <= 0) {
-            // 横衝突 → ノックバック
-            const kx = Math.sign(this.playerBody.position.x - other.position.x) * ENEMY_KNOCK_VX;
-            Body.setVelocity(this.playerBody, { x: kx, y: ENEMY_KNOCK_VY });
+          } else if (this._knockbackTimer <= 0 && this._ghostTimer <= 0) {
+            // 横衝突 → ノックバック（armor PUで吹っ飛び角速軽減）
+            const armorMult = Math.max(0.1, 1 - this.getPuLevel('armor') * 0.3);
+            const kx = Math.sign(this.playerBody.position.x - other.position.x) * ENEMY_KNOCK_VX * armorMult;
+            const ky = ENEMY_KNOCK_VY * armorMult;
+            Body.setVelocity(this.playerBody, { x: kx, y: ky });
             this._knockbackTimer = KNOCKBACK_DURATION;
             this._contacts  = 0;
             this._jumpsLeft = 1;
@@ -2431,6 +2533,12 @@ export class Game {
           continue;
         }
 
+        if (plat.isPowerup && !plat.puUsed) {
+          plat.puUsed = true;
+          this._openPowerupMenu();
+          continue;
+        }
+
         // 移動床・エレベーター: 着地時のみ追従登録
         if (plat.isMoving || plat.isElevator) {
           this._ridingPlatforms.add(plat);
@@ -2440,7 +2548,7 @@ export class Game {
           plat.activateElevator();
         }
 
-        plat.tryStartCountdown();
+        plat.tryStartCountdown(this.getPuLevel('tough_floor') * 400);
         if (plat.isGoal) {
           // 3ステージごとにボス戦を挿入（Stage 3→Ph1 ... 18→Ph6）
           const bossAfter = [3, 6, 9, 12, 15, 18];
@@ -2555,6 +2663,13 @@ export class Game {
         continue;
       }
 
+      // PU床：固定高さフロンティアに達したら配置（PU_INTERVAL 単位で定間隔）
+      if (this._puFrontier > -9999999 && y <= this._puFrontier) {
+        this._addPlat(x, y, Math.max(140, w * 0.75), PLAT_H, { isPowerup: true, canCollapse: false });
+        this._puFrontier -= PU_INTERVAL;
+        continue;
+      }
+
       // 種別を確率選択（回復床は高さ固定方式に変更済み）
       const roll = rng();
       let cum = 0;
@@ -2636,18 +2751,35 @@ export class Game {
   }
 
   _debugExecCmd(cmd) {
-    const s = cmd.toLowerCase();
-    if (s === 'x') {
+    const s = cmd.trim();
+    const sl = s.toLowerCase();
+    if (sl === 'x') {
       this.debugMode = false;
       this.input.setTextMode(false);
       return;
     }
-    const bossM = s.match(/^b(\d+)$/);
+    // buff {id} {lv} — PUを指定レベルで付与（lv=0で削除）
+    const buffM = sl.match(/^buff\s+(\S+)\s+(\d+)$/);
+    if (buffM) {
+      const id = buffM[1];
+      const lv = parseInt(buffM[2]);
+      const def = POWERUP_POOL.find(p => p.id === id);
+      if (def) {
+        if (!this._powerups) this._powerups = {};
+        if (lv === 0) {
+          delete this._powerups[id];
+        } else {
+          this._powerups[id] = Math.min(lv, def.maxLv);
+        }
+      }
+      return;
+    }
+    const bossM = sl.match(/^b(\d+)$/);
     if (bossM) {
       const ph = parseInt(bossM[1]);
       if (ph >= 1 && ph <= 6) { this._debugEnterBoss(ph); return; }
     }
-    const stageM = s.match(/^(\d+)$/);
+    const stageM = sl.match(/^(\d+)$/);
     if (stageM) {
       const st = parseInt(stageM[1]);
       if (st >= 1 && st <= STAGE_COUNT) { this._debugJumpToStage(st); return; }
@@ -2900,8 +3032,16 @@ export class Game {
       if (cmd !== null) this._debugExecCmd(cmd);
     }
 
-    // タイトル / クリア 操作
+    // タイトル / クリア / PU選択 操作
     if (this.state !== 'playing') {
+      // ---- パワーアップ選択 ----
+      if (this.state === 'powerup_select') {
+        if (inp.isPressed('Digit1') || inp.isPressed('Numpad1')) this.applyPowerup(0);
+        else if (inp.isPressed('Digit2') || inp.isPressed('Numpad2')) this.applyPowerup(1);
+        else if (inp.isPressed('Digit3') || inp.isPressed('Numpad3')) this.applyPowerup(2);
+        inp.flush();
+        return;
+      }
       if (this.state === 'title' && (inp.isPressed('Space') || inp.isPressed('KeyR'))) {
         this._titleMessage = '';
         this._init({ mode: 'stage', stage: 1, lives: MAX_LIVES, newRun: true });
@@ -2945,43 +3085,114 @@ export class Game {
     if (this._flashTimer > 0) this._flashTimer -= dt;
 
     // ノックバック中は入力を無効にして自然減衰に任せる
+    // quick_rise PU: 1lvにつきdt消費を80ms/lv分余分に進める
     if (this._knockbackTimer > 0) {
-      this._knockbackTimer -= dt;
+      const prev = this._knockbackTimer;
+      this._knockbackTimer -= dt + this.getPuLevel('quick_rise') * 80 * (dt / 16.67);
+      // ノックバック終了瞬間に ghost 無敵タイマー起動
+      if (prev > 0 && this._knockbackTimer <= 0) {
+        this._ghostTimer = this.getPuLevel('ghost') * 400;
+      }
     } else {
-      // 水平移動
-      let vx = 0;
-      if (inp.isDown('ArrowLeft')  || inp.isDown('KeyA')) vx = -PLAYER_SPEED;
-      if (inp.isDown('ArrowRight') || inp.isDown('KeyD')) vx =  PLAYER_SPEED;
+      if (this._ghostTimer > 0) this._ghostTimer -= dt;
 
-      // 風ゾーン内ならドリフト加算（入力に乗せる形で自然に戻る）
-      for (const zone of this.windZones) {
-        if (b.position.y >= zone.top && b.position.y <= zone.bottom) {
-          vx += zone.strength * dt;
-          break;
+      if (this.debugMode) {
+        // デバッグコンソール表示中は操作を完全停止（水平速度0固定、重力は継続）
+        Body.setVelocity(b, { x: 0, y: b.velocity.y });
+      } else {
+        // 水平移動（speed_up PU 反映）
+        const speedBonus = this.getPuLevel('speed_up');
+        const curSpeed   = PLAYER_SPEED + speedBonus;
+        let vx = 0;
+        if (inp.isDown('ArrowLeft')  || inp.isDown('KeyA')) vx = -curSpeed;
+        if (inp.isDown('ArrowRight') || inp.isDown('KeyD')) vx =  curSpeed;
+
+        // 風ゾーン内ならドリフト加算（wind_shield PUで軽減）
+        const windShieldMult = Math.max(0, 1 - this.getPuLevel('wind_shield') * 0.4);
+        for (const zone of this.windZones) {
+          if (b.position.y >= zone.top && b.position.y <= zone.bottom) {
+            vx += zone.strength * dt * windShieldMult;
+            break;
+          }
         }
-      }
 
-      // ジャンプ
-      let vy = b.velocity.y;
-      if (inp.isPressed('ArrowUp') || inp.isPressed('KeyW') || inp.isPressed('Space')) {
-        if (this._jumpsLeft === 2) {
-          vy = JUMP_VEL;
-          this._jumpsLeft--;
-        } else if (this._jumpsLeft === 1 && this._canDoubleJump) {
-          vy = JUMP_VEL;
-          this._jumpsLeft--;
-          this._canDoubleJump = false;
-          this._djCooldown    = DJ_COOLDOWN;
-          this._flashTimer    = 0;
+        // ジャンプ（high_jump PU 反映）
+        const jumpVel = JUMP_VEL - this.getPuLevel('high_jump'); // 負値大で高く飛ぶ
+        let vy = b.velocity.y;
+        // feather PU: 落下最高速度を制限（高時のみ適用）
+        const featherLv = this.getPuLevel('feather');
+        if (featherLv > 0 && vy > 0) {
+          const fallCap = 20 * (1 - featherLv * 0.2); // 20→最低12 px/frame
+          if (vy > fallCap) vy = fallCap;
+          Body.setVelocity(b, { x: b.velocity.x, y: vy });
         }
+
+        // coyote_plus: 足場を離れた直後のジャンプ猶予タイマー更新
+        const coyoteMax = this.getPuLevel('coyote_plus') * 80; // lv1=80ms, lv2=160ms
+        if (this._contacts > 0) {
+          this._coyoteTimer  = coyoteMax; // 接地中はリセット
+          this._airDashUsed  = false;     // 着地でエアダッシュ使用権リセット
+          this._airDashTimer = 0;         // ダッシュタイマーもリセット
+        } else if (this._coyoteTimer > 0) {
+          this._coyoteTimer -= dt;
+        }
+
+        if (inp.isPressed('ArrowUp') || inp.isPressed('KeyW') || inp.isPressed('Space')) {
+          if (this._jumpsLeft === 2 || (this._jumpsLeft === 1 && this._coyoteTimer > 0)) {
+            // 通常ジャンプ or coyote ジャンプ
+            vy = jumpVel;
+            this._jumpsLeft   = 1; // 空中に出たので残り1
+            this._coyoteTimer = 0;
+          } else if (this._jumpsLeft === 1 && this._canDoubleJump) {
+            // 二段ジャンプ
+            vy = jumpVel;
+            this._jumpsLeft--;
+            this._canDoubleJump = false;
+            // dj_speed PU: 100ms/lv 縮減
+            this._djCooldown = Math.max(500, DJ_COOLDOWN - this.getPuLevel('dj_speed') * 100);
+            this._flashTimer = 0;
+          }
+        }
+
+        // air_dash PU: A/D ダブルタップ（250ms以内に同じキーを2回）でエアダッシュ
+        // タッチの場合は triggerAirDash() で _dashTrigger をセット
+        const DTAP_MS      = 250;
+        const AIR_DASH_DUR = 200;
+        const AIR_DASH_VX  = 22;
+        const nowDt = performance.now();
+        if (inp.isPressed('ArrowLeft') || inp.isPressed('KeyA')) {
+          if (nowDt - this._dtapLast.left < DTAP_MS) {
+            this._dashTrigger    = true;
+            this._dashTriggerDir = -1;
+          }
+          this._dtapLast.left = nowDt;
+        }
+        if (inp.isPressed('ArrowRight') || inp.isPressed('KeyD')) {
+          if (nowDt - this._dtapLast.right < DTAP_MS) {
+            this._dashTrigger    = true;
+            this._dashTriggerDir = 1;
+          }
+          this._dtapLast.right = nowDt;
+        }
+        if (this.getPuLevel('air_dash') > 0 && !this._airDashUsed && this._contacts === 0
+            && this._dashTrigger && this._dashTriggerDir !== 0) {
+          this._airDashVx    = this._dashTriggerDir * AIR_DASH_VX;
+          this._airDashTimer = AIR_DASH_DUR;
+          this._airDashUsed  = true;
+          vy = Math.min(vy, 0); // 落下中は水平化、上昇中は維持
+        }
+        this._dashTrigger    = false;
+        this._dashTriggerDir = 0;
+        // ダッシュ中: 通常移動上書きしてタイマー消費
+        if (this._airDashTimer > 0) {
+          this._airDashTimer -= dt;
+          const t  = Math.max(0, this._airDashTimer / AIR_DASH_DUR); // 1→0
+          vx = this._airDashVx * t + vx * (1 - t); // 線形ブレンドで減衰
+        }
+
+        if (vx !== 0) this._lastMoveDir = Math.sign(vx);
+        Body.setVelocity(b, { x: vx, y: vy });
       }
-
-      Body.setVelocity(b, { x: vx, y: vy });
-    }
-
-    // デバッグ中は Space 長押しで浮遊
-    if (this.debugMode && inp.isDown('Space')) {
-      Body.setVelocity(b, { x: this.playerBody.velocity.x, y: -4.8 });
     }
 
     Engine.update(this.engine, dt);
@@ -3320,6 +3531,16 @@ export class Game {
         ctx.shadowBlur = 20;
         ctx.shadowColor = COLORS.healGlow;
         ctx.fillStyle = COLORS.heal;
+        this._drawVerts(ctx, plat.body);
+        ctx.restore();
+      }
+
+      // PU床グロー（未使用のみ）
+      if (plat.isPowerup && !plat.puUsed) {
+        ctx.save();
+        ctx.shadowBlur = 22;
+        ctx.shadowColor = COLORS.puFloorGlow;
+        ctx.fillStyle = COLORS.puFloor;
         this._drawVerts(ctx, plat.body);
         ctx.restore();
       }
@@ -4416,6 +4637,11 @@ export class Game {
       }
     }
 
+    // ===== バフアイコン（ハート下）=====
+    if (this.state === 'playing' || this.state === 'powerup_select') {
+      this._renderBuffIcons(ctx);
+    }
+
     // HUD（右上: ステージ情報）
     const height = Math.max(0, Math.floor(START_Y - this.playerBody.position.y));
     const hudX   = W - 14;
@@ -4470,17 +4696,17 @@ export class Game {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffb347';
       ctx.font = 'bold 12px ui-monospace, Consolas, monospace';
-      ctx.fillText('[DEBUG CONSOLE]  Space: 浮遊  |  無敵ON', bx, cy + 16);
+      ctx.fillText('[DEBUG CONSOLE]  操作停止中  |  無敵ON', bx, cy + 16);
 
       const buf    = this.input.getTextBuffer();
       const cursor = Math.floor(Date.now() / 500) % 2 === 0 ? '█' : ' ';
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 18px ui-monospace, Consolas, monospace';
+      ctx.font = 'bold 16px ui-monospace, Consolas, monospace';
       ctx.fillText(`> ${buf}${cursor}`, bx, cy + 40);
 
       ctx.fillStyle = '#aaaaaa';
       ctx.font = '11px ui-monospace, Consolas, monospace';
-      ctx.fillText('1-' + STAGE_COUNT + ': ステージ  b1-b6: ボス戦  x: 終了  [Enter] で実行', bx, cy + 66);
+      ctx.fillText(`1-${STAGE_COUNT}: ステージ  b1-b6: ボス戦  buff {id} {lv}: PU付与  x: 終了  [Enter]実行`, bx, cy + 66);
     }
 
     // 操作説明
@@ -4521,6 +4747,143 @@ export class Game {
         COLORS.bossWeak
       );
     }
+    if (this.state === 'powerup_select') {
+      this._renderPowerupSelect(ctx);
+    }
+  }
+
+  // ===== 取得済みバフアイコン（ハート下に表示）=====
+  _renderBuffIcons(ctx) {
+    if (!this._powerups) return;
+    const active = POWERUP_POOL.filter(p => (this._powerups[p.id] ?? 0) > 0);
+    if (active.length === 0) return;
+
+    const IW = 40, IH = 26, GAP = 4;
+    const startX = 10, startY = 54; // ハート下（hy0=23, tip=20 → 43px → +11）
+    const maxPerRow = 8;
+
+    ctx.save();
+    for (let i = 0; i < active.length; i++) {
+      const p   = active[i];
+      const lv  = this._powerups[p.id];
+      const col = RARITY_COLOR[p.rarity];
+      const ix  = startX + (i % maxPerRow) * (IW + GAP);
+      const iy  = startY + Math.floor(i / maxPerRow) * (IH + GAP);
+
+      // 背景
+      ctx.fillStyle = 'rgba(8,9,18,0.78)';
+      ctx.beginPath();
+      ctx.roundRect(ix, iy, IW, IH, 4);
+      ctx.fill();
+
+      // レア度枠
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(ix, iy, IW, IH, 4);
+      ctx.stroke();
+
+      // 略称ラベル
+      ctx.fillStyle = col;
+      ctx.font = 'bold 8px ui-monospace, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(p.short, ix + IW / 2, iy + 11);
+
+      // レベル
+      ctx.fillStyle = '#e8e8f0';
+      ctx.font = 'bold 9px ui-monospace, Consolas, monospace';
+      ctx.fillText(`Lv${lv}`, ix + IW / 2, iy + 22);
+    }
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  // ===== パワーアップ選択UI =====
+  _renderPowerupSelect(ctx) {
+    const choices = this._puChoices;
+    if (!choices || choices.length === 0) return;
+
+    // 半透明オーバーレイ
+    ctx.fillStyle = 'rgba(10,11,18,0.82)';
+    ctx.fillRect(0, 0, W, H);
+
+    // タイトル
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle    = '#e6e6ea';
+    ctx.font         = 'bold 26px ui-monospace, monospace';
+    ctx.fillText('POWER UP  ─  choose one', W / 2, 62);
+
+    // カード描画
+    const CARD_W = 220, CARD_H = 160, GAP = 30;
+    const totalW = CARD_W * choices.length + GAP * (choices.length - 1);
+    const startX = (W - totalW) / 2;
+    const cardY  = H / 2 - CARD_H / 2 + 20;
+
+    choices.forEach((pu, i) => {
+      const cx = startX + i * (CARD_W + GAP);
+      const col = RARITY_COLOR[pu.rarity];
+      const lv  = (this._powerups?.[pu.id] ?? 0) + 1; // 取得後のlv
+
+      // カード背景
+      ctx.save();
+      ctx.shadowBlur  = 28;
+      ctx.shadowColor = col;
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle   = col;
+      ctx.beginPath();
+      ctx.roundRect(cx, cardY, CARD_W, CARD_H, 12);
+      ctx.fill();
+      ctx.restore();
+
+      // 枠線
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 2.5;
+      ctx.globalAlpha = 0.80;
+      ctx.beginPath();
+      ctx.roundRect(cx, cardY, CARD_W, CARD_H, 12);
+      ctx.stroke();
+      ctx.restore();
+
+      // レア度バッジ
+      const badge = pu.rarity === 'common' ? 'COMMON' : pu.rarity === 'uncommon' ? 'UNCOMMON' : 'RARE';
+      ctx.fillStyle    = col;
+      ctx.globalAlpha  = 0.90;
+      ctx.font         = 'bold 11px ui-monospace, monospace';
+      ctx.textAlign    = 'center';
+      ctx.fillText(badge, cx + CARD_W / 2, cardY + 20);
+
+      // ラベル
+      ctx.globalAlpha  = 1.0;
+      ctx.fillStyle    = '#ffffff';
+      ctx.font         = `bold 22px ui-monospace, monospace`;
+      ctx.fillText(pu.label, cx + CARD_W / 2, cardY + 60);
+
+      // 効果テキスト
+      ctx.fillStyle    = '#c8d0e8';
+      ctx.font         = '14px ui-monospace, monospace';
+      ctx.fillText(pu.desc(lv), cx + CARD_W / 2, cardY + 95);
+
+      // Lv表示（複数回選択可の場合）
+      if (pu.maxLv > 1) {
+        const lvStr = `Lv ${lv} / ${pu.maxLv}`;
+        ctx.fillStyle   = col;
+        ctx.globalAlpha = 0.80;
+        ctx.font        = '12px ui-monospace, monospace';
+        ctx.fillText(lvStr, cx + CARD_W / 2, cardY + 118);
+      }
+
+      // キーヒント
+      ctx.globalAlpha  = 0.70;
+      ctx.fillStyle    = '#e6e6ea';
+      ctx.font         = `bold 15px ui-monospace, monospace`;
+      ctx.fillText(`[ ${i + 1} ]`, cx + CARD_W / 2, cardY + CARD_H - 16);
+    });
+
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.globalAlpha  = 1.0;
   }
 
   // ===== バーチャルパッド描画 =====
@@ -4607,9 +4970,34 @@ export class Game {
     ctx.font         = 'bold 34px ui-monospace, monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('▲', 720, 478);
+    ctx.fillText('▲', 620, 478);
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign    = 'left';
+
+    // ---- ダッシュボタン: air_dash PU取得時のみ表示 ----
+    if (this.getPuLevel('air_dash') > 0) {
+      const DASH_CX = 878, DASH_CY = 468, DASH_R = 44;
+      const dashReady = !this._airDashUsed;
+      ctx.globalAlpha = dashReady ? 0.80 : 0.28;
+      // 背景円
+      ctx.fillStyle = dashReady ? 'rgba(255,200,50,0.28)' : 'rgba(60,60,60,0.28)';
+      ctx.beginPath(); ctx.arc(DASH_CX, DASH_CY, DASH_R, 0, Math.PI * 2); ctx.fill();
+      // 樠
+      ctx.strokeStyle = dashReady ? '#ffd040' : '#444';
+      ctx.lineWidth   = 2.5;
+      ctx.beginPath(); ctx.arc(DASH_CX, DASH_CY, DASH_R, 0, Math.PI * 2); ctx.stroke();
+      // ラベル
+      ctx.fillStyle    = dashReady ? '#ffe88a' : '#555';
+      ctx.font         = 'bold 15px ui-monospace, monospace';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('DASH', DASH_CX, DASH_CY - 5);
+      ctx.font         = '11px ui-monospace, monospace';
+      ctx.fillStyle    = dashReady ? '#ffcc44' : '#444';
+      ctx.fillText(dashReady ? 'READY' : 'USED', DASH_CX, DASH_CY + 10);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign    = 'left';
+    }
 
     // ---- ジャンプフラッシュアニメーション ----
     const now = Date.now();
@@ -4659,6 +5047,63 @@ export class Game {
   setJoystickState(base, stick) {
     this._joystickBase  = base;
     this._joystickStick = stick;
+  }
+
+  // ===== パワーアップ =====
+
+  /**
+   * 現在のパワーアップレベルを取得。未取得なら0。
+   */
+  getPuLevel(id) {
+    return this._powerups?.[id] ?? 0;
+  }
+
+  /**
+   * タッチダッシュボタンから呼び出す。ジョイスティック方向や最後移動方向を使ってダッシュ発動。
+   */
+  triggerAirDash() {
+    const dir = this.input.isVirtualDown('ArrowLeft')  ? -1
+              : this.input.isVirtualDown('ArrowRight') ?  1
+              : (this._lastMoveDir ?? 1);
+    this._dashTrigger    = true;
+    this._dashTriggerDir = dir;
+  }
+
+  /**
+   * PU床を踏んだときに呼ぶ。重複なし3択を抽選してメニューを開く。
+   * 現時点ではstate='powerup_select'に移行するのみ。
+   */
+  _openPowerupMenu() {
+    // 重み付きプールからshuffleして最大Lvに達したものを除外し、3択を選ぶ
+    const pool = PU_WEIGHTED.filter(p => (this._powerups?.[p.id] ?? 0) < p.maxLv);
+    // Fisher-Yatesで先頭3枚をシャッフル抽出
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    // 重複id除去で3種選ぶ
+    const seen = new Set();
+    const choices = [];
+    for (const p of shuffled) {
+      if (!seen.has(p.id)) { seen.add(p.id); choices.push(p); }
+      if (choices.length === 3) break;
+    }
+    if (choices.length === 0) return; // 全てmaxLv到達なら何もしない
+    this._puChoices = choices;
+    this.state = 'powerup_select';
+  }
+
+  /**
+   * 選択カード(index 0/1/2)を確定してゲームに戻る
+   */
+  applyPowerup(index) {
+    const pu = this._puChoices?.[index];
+    if (!pu) return;
+    if (!this._powerups) this._powerups = {};
+    this._powerups[pu.id] = (this._powerups[pu.id] ?? 0) + 1;
+    this._puChoices = null;
+    this.state = 'playing';
   }
 
   _drawVerts(ctx, body) {
