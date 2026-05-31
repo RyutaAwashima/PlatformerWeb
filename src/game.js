@@ -25,7 +25,7 @@ const PLAYER_SPEED = 6;
 const JUMP_VEL = -18;          // ジャンプ力（大きいほど高く飛ぶ）
 
 const START_Y = 480;            // プレイヤー開始世界Y
-const STAGE_COUNT = 18;
+const STAGE_COUNT = 12;
 const BASE_GOAL_HEIGHT = 1700;  // Stage1 の必要高度(px)
 const GOAL_STEP_HEIGHT = 220;   // ステージごとの追加高度(px)
 const HEAVENS_UNLOCK_STAGE = STAGE_COUNT;
@@ -2236,6 +2236,8 @@ export class Game {
     this.currentStage = 1;
     this.currentMode = 'stage'; // stage | heavens
     this._healUsedY = new Set(); // リトライ跨ぎから持越する回復済みY座標セット
+    this._puUsedY   = new Set(); // リトライ跨ぎから持越するPU床使用済みY座標セット
+    this._afterPuState = null;   // PU選択完了後に遷移するstate名
     this._nextStage = 1;
     this._titleMessage = '';
     this._pendingBossPhase = 0;
@@ -2260,14 +2262,14 @@ export class Game {
         windRate:    0.55 + Math.random() * 0.30,
       };
     }
-    // Stage 1-9: 緩温なスケール。Stage 10-18: 全要素が超高密度で四屌なスケール。
+    // 2ステージ毎にギミック解禁: Mv(3)→Blink(5)→Elev(7)→Wind(9)→全部(11-12)
     return {
-      enemyRate:    Math.min(0.22 + (stage - 1) * 0.04, 0.70),
+      enemyRate:    Math.min(0.22 + (stage - 1) * 0.05, 0.72),
       healInterval: stage >= 3 ? HEAL_INTERVAL : 0,
-      movingRate:   stage >= 4  ? Math.min((stage - 3) * 0.08, 0.45) : 0,
-      blinkRate:    stage >= 5  ? Math.min((stage - 4) * 0.06, 0.30) : 0,
-      elevRate:     stage >= 6  ? Math.min((stage - 5) * 0.06, 0.26) : 0,
-      windRate:     stage >= 7  ? Math.min((stage - 6) * 0.30, 0.90) : 0,
+      movingRate:   stage >= 3 ? Math.min((stage - 2) * 0.12, 0.48) : 0,
+      blinkRate:    stage >= 5 ? Math.min((stage - 4) * 0.10, 0.30) : 0,
+      elevRate:     stage >= 7 ? Math.min((stage - 6) * 0.12, 0.28) : 0,
+      windRate:     stage >= 9 ? Math.min((stage - 8) * 0.45, 0.90) : 0,
     };
   }
 
@@ -2276,6 +2278,7 @@ export class Game {
     // リトライ判定: 同じステージ・同じモードへの再入のみ healUsedY を保持
     if (newRun || stage !== this.currentStage || mode !== this.currentMode) {
       this._healUsedY.clear();
+      this._puUsedY.clear(); // ステージ変化時はPU床持越もリセット
     }
     // パワーアップはnewRunのときのみリセット（リトライでは持越し）
     if (newRun) {
@@ -2361,10 +2364,8 @@ export class Game {
       this._healFrontier = this.currentStageConfig.healInterval > 0
         ? spawnY - Math.round(this.stageGoalHeight * 0.55)
         : -9999999;
-      // PU床: Stage2以降かつ最初の回復床より少し高い位置から開始
-      this._puFrontier = mode === 'stage' && stage >= 2
-        ? spawnY - Math.round(this.stageGoalHeight * 0.35)
-        : -9999999;
+      // PU床: ステージ内にランダムで1〜2個配置（シード乱数で再現性あり）
+      this._puTargets = (mode === 'stage') ? this._genPuTargets(spawnY, this.stageGoalHeight) : [];
       this.windZones     = [];
       this._windFrontier = spawnY - 600;
       this._generateBatch(12);
@@ -2535,6 +2536,7 @@ export class Game {
 
         if (plat.isPowerup && !plat.puUsed) {
           plat.puUsed = true;
+          this._puUsedY.add(Math.round(plat.body.position.y)); // リトライ跨ぎで持越
           this._openPowerupMenu();
           continue;
         }
@@ -2550,20 +2552,22 @@ export class Game {
 
         plat.tryStartCountdown(this.getPuLevel('tough_floor') * 400);
         if (plat.isGoal) {
-          // 3ステージごとにボス戦を挿入（Stage 3→Ph1 ... 18→Ph6）
-          const bossAfter = [3, 6, 9, 12, 15, 18];
+          // 2ステージごとにボス戦を挿入（Stage 2→Ph1 ... 12→Ph6）
+          const bossAfter = [2, 4, 6, 8, 10, 12];
           if (bossAfter.includes(this.currentStage)) {
             const phase = bossAfter.indexOf(this.currentStage) + 1;
             this._pendingBossPhase = phase;
-            this._nextStage = this.currentStage + 1; // ボスクリア後の遷移先
-            this.state = 'stageclear'; // 一度クリア画面を挙ってからボスへ
-          } else if (this.currentStage >= HEAVENS_UNLOCK_STAGE) {
-            this.heavensUnlocked = true;
-            this.state = 'title';
-            this._titleMessage = 'HEAVENS MODE UNLOCKED';
+            this._nextStage = this.currentStage + 1;
           } else {
             this._pendingBossPhase = 0;
             this._nextStage = this.currentStage + 1;
+          }
+          // ステージクリアリワード: PU選択を挟んでから stageclear へ
+          this._afterPuState = 'stageclear';
+          this._openPowerupMenu();
+          if (this.state !== 'powerup_select') {
+            // プールが空（全 maxLv 達成）の場合は直接 stageclear へ
+            this._afterPuState = null;
             this.state = 'stageclear';
           }
         }
@@ -2590,6 +2594,10 @@ export class Game {
     // リトライ時: 前回使用済みの回復床は即座に使用済み扱い
     if (opts.isHealing && this._healUsedY.has(Math.round(y))) {
       plat.healUsed = true;
+    }
+    // リトライ時: 前回踏み済みPU床は即座に使用済み扱い（ミスで復活しない）
+    if (opts.isPowerup && this._puUsedY.has(Math.round(y))) {
+      plat.puUsed = true;
     }
     this.platforms.push(plat);
     World.add(this.engine.world, body);
@@ -2663,10 +2671,10 @@ export class Game {
         continue;
       }
 
-      // PU床：固定高さフロンティアに達したら配置（PU_INTERVAL 単位で定間隔）
-      if (this._puFrontier > -9999999 && y <= this._puFrontier) {
+      // PU床：事前計算したターゲット高さに達したら配置
+      if (this._puTargets.length > 0 && y <= this._puTargets[0]) {
+        this._puTargets.shift();
         this._addPlat(x, y, Math.max(140, w * 0.75), PLAT_H, { isPowerup: true, canCollapse: false });
-        this._puFrontier -= PU_INTERVAL;
         continue;
       }
 
@@ -5062,6 +5070,23 @@ export class Game {
   /**
    * タッチダッシュボタンから呼び出す。ジョイスティック方向や最後移動方向を使ってダッシュ発動。
    */
+  /**
+   * ステージ内PU床のターゲットY座標を1〜2個生成する（シード乱数使用）。
+   * ターゲットは降順ソート（大きいY＝低い位置が先頭）。
+   */
+  _genPuTargets(spawnY, goalH) {
+    const count = 1 + (rng() < 0.5 ? 1 : 0); // 50%で2個
+    const targets = [];
+    for (let i = 0; i < count; i++) {
+      // ステージ高さの 30%〜75% 範囲を均等分割してランダムに配置
+      const lo = 0.30 + i * (0.45 / count);
+      const hi = lo + 0.45 / count;
+      const ratio = lo + rng() * (hi - lo);
+      targets.push(Math.round(spawnY - goalH * ratio));
+    }
+    return targets.sort((a, b) => b - a); // 降順: 大きいY（低い位置）が先
+  }
+
   triggerAirDash() {
     const dir = this.input.isVirtualDown('ArrowLeft')  ? -1
               : this.input.isVirtualDown('ArrowRight') ?  1
@@ -5117,7 +5142,9 @@ export class Game {
     if (!this._powerups) this._powerups = {};
     this._powerups[pu.id] = (this._powerups[pu.id] ?? 0) + 1;
     this._puChoices = null;
-    this.state = 'playing';
+    const afterState = this._afterPuState;
+    this._afterPuState = null;
+    this.state = afterState ?? 'playing';
   }
 
   _drawVerts(ctx, body) {
