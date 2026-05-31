@@ -60,20 +60,11 @@ html, body {
   z-index: 1;
 }
 
-/* ジャンプゾーン: 中央27%幅（50%-77%） */
+/* ジャンプゾーン: 右50%全体。DASHボタンはcanvas内で描画しタッチ判定はJS側で処理 */
 #vpad-jump {
-  right: 23%;
-  top: 0;
-  width: 27%;
-  height: 100%;
-  z-index: 1;
-}
-
-/* ダッシュボタン: 右23%幅（77%-100%） */
-#vpad-dash {
   right: 0;
   top: 0;
-  width: 23%;
+  width: 50%;
   height: 100%;
-  z-index: 2;
+  z-index: 1;
 }

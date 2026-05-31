@@ -2739,7 +2739,7 @@ export class Game {
   _loseLife() {
     if (this.debugMode) return;   // デバッグ中は無敵
     const nextLives = this.lives - 1;
-    if (nextLives <= 0) {
+    if (nextLives < 0) {
       if (this.currentMode === 'heavens') {
         this.bestHeavensHeight = Math.max(this.bestHeavensHeight, Math.floor(this.maxHeightReached));
       }
@@ -4612,8 +4612,9 @@ export class Game {
     }
 
     // ===== 左上 ハートHUD（残機表示）=====
+    const hudY = this._isTouchDevice ? 100 : 0; // スマホ横画面のアドレスバー分オフセット
     {
-      const hy0     = 23;   // ハート上部中心Y
+      const hy0     = 23 + hudY;   // ハート上部中心Y
       const spacing = 40;   // ハート間隔（26→40、約50%拡大）
       const r       = 9;    // 半円半径（6→9、50%拡大）
       const off     = 7;    // 二円の横オフセット（5→7）
@@ -4639,7 +4640,7 @@ export class Game {
 
     // ===== バフアイコン（ハート下）=====
     if (this.state === 'playing' || this.state === 'powerup_select') {
-      this._renderBuffIcons(ctx);
+      this._renderBuffIcons(ctx, hudY);
     }
 
     // HUD（右上: ステージ情報）
@@ -4649,37 +4650,37 @@ export class Game {
     ctx.font      = 'bold 15px ui-monospace, Consolas, monospace';
     ctx.textAlign = 'right';
     if (this.currentMode === 'boss') {
-      ctx.fillText(`BOSS PHASE ${this._bossPhase}`, hudX, 26);
-      ctx.fillText(`残機 ${this.lives}`, hudX, 48);
+      ctx.fillText(`BOSS PHASE ${this._bossPhase}`, hudX, 26 + hudY);
+      ctx.fillText(`残機 ${this.lives}`, hudX, 48 + hudY);
       if (this._bossPhase === 2) {
         ctx.fillStyle = '#a0c8ff';
         ctx.font      = '12px ui-monospace, Consolas, monospace';
-        ctx.fillText('青い床に乗ると崩落 → ボスに当てるとスタン', hudX, 70);
+        ctx.fillText('青い床に乗ると崩落 → ボスに当てるとスタン', hudX, 70 + hudY);
       } else if (this._bossPhase === 4) {
         ctx.fillStyle = COLORS.bossWeak;
         ctx.font      = '12px ui-monospace, Consolas, monospace';
-        ctx.fillText('黄色に光った瞬間に飛び乗れ！ → 訒れると超高速突進が来る', hudX, 70);
+        ctx.fillText('黄色に光った瞬間に飛び乗れ！ → 訒れると超高速突進が来る', hudX, 70 + hudY);
       } else if (this._bossPhase === 5) {
         ctx.fillStyle = BOSS5_MINION_COLOR;
         ctx.font      = '12px ui-monospace, Consolas, monospace';
-        ctx.fillText('停留中の頭を踏め！ 紫の手下は踏むと大ジャンプ台になる', hudX, 70);
+        ctx.fillText('停留中の頭を踏め！ 紫の手下は踏むと大ジャンプ台になる', hudX, 70 + hudY);
       }
     } else {
       if (this.currentMode === 'stage') {
         const toGoal = Math.max(0, this.stageGoalHeight - height);
-        ctx.fillText(`Stage ${this.currentStage}/${STAGE_COUNT}`, hudX, 26);
-        ctx.fillText(`ゴールまで ${toGoal} m`, hudX, 48);
+        ctx.fillText(`Stage ${this.currentStage}/${STAGE_COUNT}`, hudX, 26 + hudY);
+        ctx.fillText(`ゴールまで ${toGoal} m`, hudX, 48 + hudY);
       } else {
-        ctx.fillText('HEAVENS MODE', hudX, 26);
-        ctx.fillText(`最高到達点 ${Math.floor(this.bestHeavensHeight)} m`, hudX, 48);
+        ctx.fillText('HEAVENS MODE', hudX, 26 + hudY);
+        ctx.fillText(`最高到達点 ${Math.floor(this.bestHeavensHeight)} m`, hudX, 48 + hudY);
       }
       ctx.fillStyle = COLORS.text;
       ctx.font      = 'bold 15px ui-monospace, Consolas, monospace';
-      ctx.fillText(`高度 ${height} m`, hudX, 70);
-      ctx.fillText(`残機 ${this.lives}`, hudX, 92);
+      ctx.fillText(`高度 ${height} m`, hudX, 70 + hudY);
+      ctx.fillText(`残機 ${this.lives}`, hudX, 92 + hudY);
       ctx.fillStyle = COLORS.heal;
       ctx.font      = '13px ui-monospace, Consolas, monospace';
-      ctx.fillText('◆ 回復床: 残機 +1', hudX, 114);
+      ctx.fillText('◆ 回復床: 残機 +1', hudX, 114 + hudY);
     }
     ctx.textAlign = 'left';
     if (this.debugMode) {
@@ -4753,13 +4754,13 @@ export class Game {
   }
 
   // ===== 取得済みバフアイコン（ハート下に表示）=====
-  _renderBuffIcons(ctx) {
+  _renderBuffIcons(ctx, hudY = 0) {
     if (!this._powerups) return;
     const active = POWERUP_POOL.filter(p => (this._powerups[p.id] ?? 0) > 0);
     if (active.length === 0) return;
 
     const IW = 40, IH = 26, GAP = 4;
-    const startX = 10, startY = 54; // ハート下（hy0=23, tip=20 → 43px → +11）
+    const startX = 10, startY = 54 + hudY; // ハート下（hy0=23, tip=20 → 43px → +11）
     const maxPerRow = 8;
 
     ctx.save();
@@ -4964,13 +4965,13 @@ export class Game {
       ctx.textAlign    = 'left';
     }
 
-    // ---- ジャンプエリア: 極薄ヒント（▲を右半分中央下に薄く）----
+    // ---- ジャンプエリア: 極薄ヒント（▲を右半分中央に薄く）----
     ctx.globalAlpha  = 0.10;
     ctx.fillStyle    = '#80ff80';
     ctx.font         = 'bold 34px ui-monospace, monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('▲', 620, 478);
+    ctx.fillText('▲', 680, 478);
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign    = 'left';
 
@@ -5067,6 +5068,19 @@ export class Game {
               : (this._lastMoveDir ?? 1);
     this._dashTrigger    = true;
     this._dashTriggerDir = dir;
+  }
+
+  /**
+   * タッチ座標(cx,cy)がDASHボタン領域に当たるか判定し、当たれば処理する。
+   * @returns {boolean} true=ジャンプを抑制（DASHボタンが消費）, false=通常ジャンプへ
+   */
+  tryDashTouch(cx, cy) {
+    if (this.getPuLevel('air_dash') === 0) return false; // PU未取得
+    const DASH_CX = 878, DASH_CY = 468, DASH_R = 44;
+    if (Math.hypot(cx - DASH_CX, cy - DASH_CY) > DASH_R) return false;
+    // ボタン範囲内: READY ならダッシュ発火、USED なら何もしない（いずれもジャンプ抑制）
+    if (!this._airDashUsed) this.triggerAirDash();
+    return true;
   }
 
   /**

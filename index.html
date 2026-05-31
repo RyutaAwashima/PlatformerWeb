@@ -12,12 +12,10 @@
 
     <!-- バーチャルパッド（タッチデバイスのみCSS表示） -->
     <div id="vpad" aria-hidden="true">
-      <!-- D-パッドゾーン: 左27%幅。内郦50%で◄►を分割。ドラッグで切替可 -->
+      <!-- D-パッドゾーン: 左50%幅。内部50%で◄►を分割。ドラッグで切替可 -->
       <div id="vpad-dpad" class="vpad-zone"></div>
-      <!-- ジャンプゾーン: 中央27%幅、任意タップでジャンプ -->
+      <!-- ジャンプゾーン: 右50%全体。DASHボタン範囲は game.tryDashTouch() で振り分け -->
       <div id="vpad-jump"  class="vpad-zone"></div>
-      <!-- ダッシュボタン: 右23%幅、air_dash PU取得時に有効 -->
-      <div id="vpad-dash"  class="vpad-zone"></div>
     </div>
   </div>
 

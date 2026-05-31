@@ -100,19 +100,9 @@ if (dpad) {
   dpad.addEventListener('touchcancel', release, { passive: false });
 }
 
-// ---- ダッシュボタン（右23%）----
-// air_dash PU取得時のみ有効。タップで game.triggerAirDash() を呼び出す。
-const dashZone = document.getElementById('vpad-dash');
-if (dashZone) {
-  dashZone.addEventListener('touchstart', e => {
-    e.preventDefault();
-    if (game.state !== 'playing') return;
-    game.triggerAirDash();
-  }, { passive: false });
-}
-
-// ---- ジャンプゾーン（中央27%幅、任意位置タップ）----
-// タップ位置をcanvas論理座標に変換してゲームへ通知 → フラッシュ描画
+// ---- ジャンプゾーン（右50%全体）----
+// タップ位置をcanvas論理座標に変換。DASHボタン範囲内なら game.tryDashTouch() に委譲し
+// ジャンプを発火しない。それ以外は通常ジャンプ。
 if (jZone) {
   jZone.addEventListener('touchstart', e => {
     e.preventDefault();
@@ -121,6 +111,8 @@ if (jZone) {
       const cr = canvas.getBoundingClientRect();
       const cx = (t.clientX - cr.left) / cr.width  * 960;
       const cy = (t.clientY - cr.top)  / cr.height * 540;
+      // DASHボタンが消費した場合はジャンプしない
+      if (game.tryDashTouch(cx, cy)) continue;
       input.virtualPress('Space');
       input.virtualPress('ArrowUp');
       game.addJumpFlash(cx, cy);
